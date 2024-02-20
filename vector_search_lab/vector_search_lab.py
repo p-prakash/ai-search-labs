@@ -50,7 +50,7 @@ def create_search_index(index_client: SearchIndexClient, index_name: str):
     
     fields = [
         SimpleField(name="id", type=SearchFieldDataType.String, key=True),
-        SimpleField(name="imageUrl", type=SearchFieldDataType.String),
+        SimpleField(name="image_url", type=SearchFieldDataType.String),
         SearchableField(
             name="title",
             type=SearchFieldDataType.String,
@@ -117,7 +117,7 @@ def generate_embeddings(taxonomy: Optional[str] = None):
                 products_with_embeddings.append({
                     "id": str(product['id']),
                     "metaData": product['metaData'],
-                    "imageUrl": product['image'][0].get('url') if product['image'] else None,
+                    "image_url": product['image'][0].get('url') if product['image'] else None,
                     "taxonomy": product['taxonomies'][0]['name'] if product['taxonomies'] else None,
                     "title": product['title'],
                     "description": product['description'],
