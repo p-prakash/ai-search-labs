@@ -1,5 +1,7 @@
 import os
+import argparse
 import json
+import time
 from typing import Optional
 from dotenv import load_dotenv
 import numpy as np
@@ -11,23 +13,25 @@ from azure.search.documents.indexes import SearchIndexClient
 
 
 def get_product_data():
+    # load Product Enrichment Response p1.json
+    with open('Product Enrichment Response p1.json') as f:
+        data = json.load(f)
+        products = data['products']
 
-    # TODO: replace with API call to get product data
-
-    products = [
-            {
-                "productid": "1",
-                "taxonomy": "category1",
-                "title": "Product 1",
-                "description": "Description of Product 1"
-            },
-            {
-                "productid": "2",
-                "taxonomy": "category2",
-                "title": "Product 2",
-                "description": "Description of Product 2"
-            }
-        ]
+    # products = [
+    #         {
+    #             "productid": "1",
+    #             "taxonomy": "category1",
+    #             "title": "Product 1",
+    #             "description": "Description of Product 1"
+    #         },
+    #         {
+    #             "productid": "2",
+    #             "taxonomy": "category2",
+    #             "title": "Product 2",
+    #             "description": "Description of Product 2"
+    #         }
+    #     ]
     
     return products
 
@@ -43,9 +47,10 @@ def create_search_index(index_client: SearchIndexClient, index_name: str):
         VectorSearchProfile,
         HnswAlgorithmConfiguration,
     )
-
+    
     fields = [
-        SimpleField(name="productid", type=SearchFieldDataType.String, key=True),
+        SimpleField(name="id", type=SearchFieldDataType.String, key=True),
+        SimpleField(name="imageUrl", type=SearchFieldDataType.String),
         SearchableField(
             name="title",
             type=SearchFieldDataType.String,
@@ -53,6 +58,7 @@ def create_search_index(index_client: SearchIndexClient, index_name: str):
             filterable=True,
         ),
         SearchableField(name="description", type=SearchFieldDataType.String),
+        SearchableField(name="metaData", type=SearchFieldDataType.String),
         SearchField(
             name="titleVector",
             type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
@@ -87,6 +93,10 @@ def create_search_index(index_client: SearchIndexClient, index_name: str):
 
     print(f'created index {index_name}')
 
+def before_retry_sleep():
+    print(f"Rate limited on the OpenAI embeddings API, sleeping before retrying...")
+    time.sleep(2)
+    
 def generate_embeddings(taxonomy: Optional[str] = None):
     # Initialize openai 
     load_dotenv()
@@ -100,22 +110,30 @@ def generate_embeddings(taxonomy: Optional[str] = None):
     products = get_product_data()
     products_with_embeddings = []
 
-    for product in products: 
-        products_with_embeddings.append({
-            "productid": product['productid'],
-            "taxonomy": product['taxonomy'],
-            "title": product['title'],
-            "description": product['description'],
-            "titleVector": openai.Embedding.create(engine= aoai_deployment,input=product['title']).data[0].embedding,
-            "descriptionVector": openai.Embedding.create(engine= aoai_deployment,input=product['description']).data[0].embedding,
-        })
+    for product in products:
+        print(f'Generating embeddings for product {product["id"]}...')
+        while True:
+            try:
+                products_with_embeddings.append({
+                    "id": str(product['id']),
+                    "metaData": product['metaData'],
+                    "imageUrl": product['image'][0].get('url') if product['image'] else None,
+                    "taxonomy": product['taxonomies'][0]['name'] if product['taxonomies'] else None,
+                    "title": product['title'],
+                    "description": product['description'],
+                    "titleVector": openai.Embedding.create(engine= aoai_deployment,input=product['title']).data[0].embedding,
+                    "descriptionVector": openai.Embedding.create(engine= aoai_deployment,input=product['description']).data[0].embedding,
+                })
+            except openai.error.RateLimitError as e:
+                before_retry_sleep()
+                continue
+            break
 
     # dump products with embeddings to json file
     with open('products_with_embeddings.json', 'w') as f:
         json.dump(products_with_embeddings, f)
         
     return products_with_embeddings
-    
 
 
 ##################################################  
@@ -145,5 +163,7 @@ except ResourceNotFoundError as ex:
 search_client = SearchClient(endpoint, index_name, AzureKeyCredential(key))
 
 # Upload documents to the index
-print('Uploading documents...')
+print('Generating embeddings and uploading documents to the index...')
 search_client.upload_documents(documents=generate_embeddings())
+
+print('Done')
